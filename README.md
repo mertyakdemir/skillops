@@ -70,6 +70,8 @@ For CI, dashboards, and backend ingestion, use JSON output:
 skillops scan --json
 ```
 
+See [GitHub Actions CI](docs/ci.md) for a pull request workflow example.
+
 To write the same JSON report to a file:
 
 ```sh
