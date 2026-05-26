@@ -30,7 +30,7 @@ export type InstructionFile = {
 
 export type IssueSeverity = "low" | "medium" | "high";
 
-export type IssueType = "broken_file_reference" | "package_manager_conflict";
+export type IssueType = "broken_file_reference" | "duplicate_instruction" | "package_manager_conflict";
 
 export type Issue = {
   id: string;
@@ -67,6 +67,9 @@ const instructionFilePatterns = [
 ];
 
 const ignoredPaths = ["**/node_modules/**", "**/dist/**", "**/.git/**"];
+const minimumDuplicateInstructionLength = 20;
+const markdownHeadingPattern = /^\s{0,3}#{1,6}(?:\s|$)/;
+const codeFencePattern = /^\s*(`{3,}|~{3,})/;
 const externalMarkdownLinkPattern = /!?\[[^\]]*]\((?:https?|ftp):\/\/[^)]*\)/gi;
 const urlPattern = /\b(?:https?|ftp):\/\/[^\s<>)\]]+/gi;
 const filePathCandidatePattern =
@@ -96,6 +99,13 @@ const packageManagerCommandPatterns: Array<{ packageManager: PackageManager; pat
     pattern: /(^|[^\w./@:-])(bun(?:\s+install)?(?![\w/@:-]|\.[A-Za-z0-9_-]))/gi
   }
 ];
+
+type NormalizedInstructionOccurrence = {
+  normalizedInstruction: string;
+  filePath: string;
+  lineNumber: number;
+  originalLine: string;
+};
 
 function getInstructionFileType(relativePath: string): InstructionFileType {
   if (relativePath === "AGENTS.md") {
@@ -217,6 +227,56 @@ export async function detectBrokenFileReferences(params: {
   return issues;
 }
 
+export async function detectDuplicateInstructions(params: {
+  instructionFiles: InstructionFile[];
+}): Promise<Issue[]> {
+  const occurrencesByNormalizedInstruction = new Map<string, NormalizedInstructionOccurrence[]>();
+
+  for (const instructionFile of params.instructionFiles) {
+    for (const occurrence of extractNormalizedInstructionOccurrences(instructionFile)) {
+      const occurrences = occurrencesByNormalizedInstruction.get(occurrence.normalizedInstruction) ?? [];
+      occurrences.push(occurrence);
+      occurrencesByNormalizedInstruction.set(occurrence.normalizedInstruction, occurrences);
+    }
+  }
+
+  const issues: Issue[] = [];
+
+  for (const [normalizedInstruction, occurrences] of occurrencesByNormalizedInstruction) {
+    const firstOccurrenceByFilePath = new Map<string, NormalizedInstructionOccurrence>();
+
+    for (const occurrence of occurrences) {
+      if (!firstOccurrenceByFilePath.has(occurrence.filePath)) {
+        firstOccurrenceByFilePath.set(occurrence.filePath, occurrence);
+      }
+    }
+
+    if (firstOccurrenceByFilePath.size < 2) {
+      continue;
+    }
+
+    const duplicateOccurrences = Array.from(firstOccurrenceByFilePath.values());
+
+    for (const occurrence of duplicateOccurrences) {
+      const duplicateFilePaths = duplicateOccurrences
+        .filter((duplicateOccurrence) => duplicateOccurrence.filePath !== occurrence.filePath)
+        .map((duplicateOccurrence) => duplicateOccurrence.filePath);
+
+      issues.push({
+        id: `duplicate_instruction:${occurrence.filePath}:${occurrence.lineNumber}:${toIssueIdFragment(normalizedInstruction)}`,
+        type: "duplicate_instruction",
+        severity: "low",
+        filePath: occurrence.filePath,
+        message: `Instruction duplicates guidance also found in ${formatFileList(duplicateFilePaths)}.`,
+        evidence: `Line ${occurrence.lineNumber}: ${occurrence.originalLine.trim()}`,
+        suggestion: "Keep this guidance in a single instruction file or remove or reword the duplicate."
+      });
+    }
+  }
+
+  return issues;
+}
+
 export async function detectRepositoryPackageManager(
   rootDir: string
 ): Promise<RepositoryPackageManager | undefined> {
@@ -298,11 +358,12 @@ export async function scanRepository(options: ScanOptions = {}): Promise<ScanRes
   const parsedOptions = scanOptionsSchema.parse(options);
   const cwd = path.resolve(parsedOptions.cwd);
   const instructionFiles = await discoverInstructionFiles(cwd);
-  const [brokenFileReferenceIssues, packageManagerConflictIssues] = await Promise.all([
+  const [brokenFileReferenceIssues, duplicateInstructionIssues, packageManagerConflictIssues] = await Promise.all([
     detectBrokenFileReferences({ rootDir: cwd, instructionFiles }),
+    detectDuplicateInstructions({ instructionFiles }),
     detectPackageManagerConflicts({ rootDir: cwd, instructionFiles })
   ]);
-  const issues = [...brokenFileReferenceIssues, ...packageManagerConflictIssues];
+  const issues = [...brokenFileReferenceIssues, ...duplicateInstructionIssues, ...packageManagerConflictIssues];
   const instructionFileLabel = instructionFiles.length === 1 ? "instruction file" : "instruction files";
 
   return {
@@ -311,6 +372,80 @@ export async function scanRepository(options: ScanOptions = {}): Promise<ScanRes
     issues,
     message: `Discovered ${instructionFiles.length} ${instructionFileLabel}.`
   };
+}
+
+function extractNormalizedInstructionOccurrences(
+  instructionFile: InstructionFile
+): NormalizedInstructionOccurrence[] {
+  const occurrences: NormalizedInstructionOccurrence[] = [];
+  const lines = instructionFile.content.split(/\r?\n/);
+  let isInsideCodeFence = false;
+
+  for (const [lineIndex, line] of lines.entries()) {
+    const trimmedLine = line.trim();
+
+    if (trimmedLine.length === 0) {
+      continue;
+    }
+
+    if (codeFencePattern.test(trimmedLine)) {
+      isInsideCodeFence = !isInsideCodeFence;
+      continue;
+    }
+
+    if (isInsideCodeFence || markdownHeadingPattern.test(line)) {
+      continue;
+    }
+
+    const normalizedInstruction = normalizeInstructionLine(line);
+
+    if (!normalizedInstruction) {
+      continue;
+    }
+
+    occurrences.push({
+      normalizedInstruction,
+      filePath: instructionFile.relativePath,
+      lineNumber: lineIndex + 1,
+      originalLine: line
+    });
+  }
+
+  return occurrences;
+}
+
+function normalizeInstructionLine(line: string): string | undefined {
+  const normalizedInstruction = line
+    .toLowerCase()
+    .trim()
+    .replace(/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalizedInstruction.length < minimumDuplicateInstructionLength) {
+    return undefined;
+  }
+
+  return normalizedInstruction;
+}
+
+function formatFileList(filePaths: string[]): string {
+  if (filePaths.length === 1) {
+    return `"${filePaths[0]}"`;
+  }
+
+  if (filePaths.length === 2) {
+    return `"${filePaths[0]}" and "${filePaths[1]}"`;
+  }
+
+  const initialFilePaths = filePaths.slice(0, -1).map((filePath) => `"${filePath}"`);
+  const finalFilePath = filePaths[filePaths.length - 1];
+
+  return `${initialFilePaths.join(", ")}, and "${finalFilePath}"`;
+}
+
+function toIssueIdFragment(value: string): string {
+  return value.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) || "instruction";
 }
 
 function isLikelyRepoFileReference(referencedPath: string): boolean {

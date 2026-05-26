@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectBrokenFileReferences,
+  detectDuplicateInstructions,
   detectPackageManagerConflicts,
   detectRepositoryPackageManager,
   discoverInstructionFiles,
@@ -143,6 +144,101 @@ describe("scanRepository", () => {
         }
       ]
     });
+  });
+
+  it("returns duplicate instruction issues", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Keep generated artifacts out of commits.");
+    await writeRepoFile(rootDir, "CLAUDE.md", "Keep generated artifacts out of commits.");
+
+    await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
+      issues: [
+        {
+          type: "duplicate_instruction",
+          severity: "low",
+          filePath: "AGENTS.md",
+          message: 'Instruction duplicates guidance also found in "CLAUDE.md".'
+        },
+        {
+          type: "duplicate_instruction",
+          severity: "low",
+          filePath: "CLAUDE.md",
+          message: 'Instruction duplicates guidance also found in "AGENTS.md".'
+        }
+      ]
+    });
+  });
+});
+
+describe("detectDuplicateInstructions", () => {
+  it("detects duplicated instructions across AGENTS.md and CLAUDE.md", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Use pnpm workspaces for every package change.");
+    await writeRepoFile(rootDir, "CLAUDE.md", "  use   pnpm workspaces for every package change!  ");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    const issues = await detectDuplicateInstructions({ instructionFiles });
+
+    expect(issues).toEqual([
+      {
+        id: "duplicate_instruction:AGENTS.md:1:use_pnpm_workspaces_for_every_package_change",
+        type: "duplicate_instruction",
+        severity: "low",
+        filePath: "AGENTS.md",
+        message: 'Instruction duplicates guidance also found in "CLAUDE.md".',
+        evidence: "Line 1: Use pnpm workspaces for every package change.",
+        suggestion: "Keep this guidance in a single instruction file or remove or reword the duplicate."
+      },
+      {
+        id: "duplicate_instruction:CLAUDE.md:1:use_pnpm_workspaces_for_every_package_change",
+        type: "duplicate_instruction",
+        severity: "low",
+        filePath: "CLAUDE.md",
+        message: 'Instruction duplicates guidance also found in "AGENTS.md".',
+        evidence: "Line 1: use   pnpm workspaces for every package change!",
+        suggestion: "Keep this guidance in a single instruction file or remove or reword the duplicate."
+      }
+    ]);
+  });
+
+  it("ignores headings", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "# Shared Agent Guidance");
+    await writeRepoFile(rootDir, "CLAUDE.md", "# Shared Agent Guidance");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectDuplicateInstructions({ instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("ignores code fences", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      ["```sh", "Keep generated artifacts out of commits.", "```"].join("\n")
+    );
+    await writeRepoFile(rootDir, "CLAUDE.md", "Keep generated artifacts out of commits.");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectDuplicateInstructions({ instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("ignores very short lines", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Run tests.");
+    await writeRepoFile(rootDir, "CLAUDE.md", "Run tests.");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectDuplicateInstructions({ instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("does not report unique instructions", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Use pnpm workspaces for every package change.");
+    await writeRepoFile(rootDir, "CLAUDE.md", "Keep implementation notes concise and current.");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectDuplicateInstructions({ instructionFiles })).resolves.toEqual([]);
   });
 });
 

@@ -27,18 +27,26 @@ Discovered 7 instruction files.
 - .codex/review.md (codex, 99 bytes)
 - .cursor/rules/typescript.md (cursor-rules, 92 bytes)
 - .github/copilot-instructions.md (github-copilot, 100 bytes)
-- AGENTS.md (agents, 162 bytes)
-- CLAUDE.md (claude, 150 bytes)
+- AGENTS.md (agents, 203 bytes)
+- CLAUDE.md (claude, 191 bytes)
 - docs/ai-guidelines.md (docs-ai-guidelines, 72 bytes)
 - docs/ai/assistant.md (docs-ai, 72 bytes)
-Found 2 issues.
+Found 4 issues.
 - broken_file_reference [medium] in AGENTS.md
   Instruction file references missing file "docs/release.md".
-  Evidence: Line 4: Review docs/release.md before documenting release changes.
+  Evidence: Line 5: Review docs/release.md before documenting release changes.
   Suggestion: Create the referenced file or update the instruction to point at an existing path.
+- duplicate_instruction [low] in AGENTS.md
+  Instruction duplicates guidance also found in "CLAUDE.md".
+  Evidence: Line 4: Keep generated artifacts out of commits.
+  Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
+- duplicate_instruction [low] in CLAUDE.md
+  Instruction duplicates guidance also found in "AGENTS.md".
+  Evidence: Line 4: Keep generated artifacts out of commits.
+  Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
 - package_manager_conflict [medium] in CLAUDE.md
   Instruction file uses npm command "npm install" but this repository uses pnpm.
-  Evidence: Line 4: Run npm install before changing dependencies.
+  Evidence: Line 5: Run npm install before changing dependencies.
   Suggestion: Replace npm commands with pnpm equivalents, or update the repository package manager metadata if npm is intended.
 ```
 
