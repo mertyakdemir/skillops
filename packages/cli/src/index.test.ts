@@ -10,13 +10,13 @@ import { createCli } from "./index.js";
 
 const generatedAt = new Date("2026-05-26T00:00:00.000Z");
 
-function createScanResult(): ScanResult {
+function createScanResult(cwd = "/repo"): ScanResult {
   return {
-    cwd: "/repo",
+    cwd,
     message: "Discovered 1 instruction file.",
     instructionFiles: [
       {
-        path: "/repo/AGENTS.md",
+        path: path.join(cwd, "AGENTS.md"),
         relativePath: "AGENTS.md",
         type: "agents",
         content: "Agent instructions",
@@ -60,6 +60,45 @@ async function runCli(args: string[]): Promise<string> {
 }
 
 describe("skillops scan", () => {
+  it("scans the invocation cwd by default", async () => {
+    let scannedCwd: string | undefined;
+    const invocationCwd = path.resolve("/workspace/project");
+    const program = createCli({
+      invocationCwd,
+      scanRepository: async (options = {}) => {
+        scannedCwd = options.cwd;
+        return createScanResult(invocationCwd);
+      },
+      stdout: {
+        write: () => undefined
+      }
+    });
+
+    await program.parseAsync(["node", "skillops", "scan"]);
+
+    expect(scannedCwd).toBe(invocationCwd);
+  });
+
+  it("scans a path relative to the invocation cwd", async () => {
+    let scannedCwd: string | undefined;
+    const invocationCwd = path.resolve("/workspace/project");
+    const expectedCwd = path.join(invocationCwd, "examples/sample-repo");
+    const program = createCli({
+      invocationCwd,
+      scanRepository: async (options = {}) => {
+        scannedCwd = options.cwd;
+        return createScanResult(expectedCwd);
+      },
+      stdout: {
+        write: () => undefined
+      }
+    });
+
+    await program.parseAsync(["node", "skillops", "scan", "examples/sample-repo"]);
+
+    expect(scannedCwd).toBe(expectedCwd);
+  });
+
   it("prints JSON to stdout with --json", async () => {
     const stdout = await runCli(["scan", "--json"]);
     const report = JSON.parse(stdout) as unknown;

@@ -4,6 +4,25 @@
   "description": "Command-line interface for SkillOps.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mertyakdemir/skillops.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/mertyakdemir/skillops/issues"
+  },
+  "homepage": "https://github.com/mertyakdemir/skillops#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "instructions",
+    "scanner",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "skillops": "./dist/index.js"
   },
@@ -15,7 +34,15 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist/index.d.ts",
+    "dist/index.d.ts.map",
+    "dist/index.js",
+    "dist/index.js.map"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",

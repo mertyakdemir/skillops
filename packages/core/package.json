@@ -4,6 +4,24 @@
   "description": "Core scanner library for SkillOps.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mertyakdemir/skillops.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/mertyakdemir/skillops/issues"
+  },
+  "homepage": "https://github.com/mertyakdemir/skillops#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "instructions",
+    "scanner"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,8 +31,14 @@
     }
   },
   "files": [
-    "dist"
+    "dist/index.d.ts",
+    "dist/index.d.ts.map",
+    "dist/index.js",
+    "dist/index.js.map"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",

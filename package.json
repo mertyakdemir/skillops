@@ -6,10 +6,22 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.11.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mertyakdemir/skillops.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mertyakdemir/skillops/issues"
+  },
+  "homepage": "https://github.com/mertyakdemir/skillops#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "corepack pnpm -r build",
     "test": "corepack pnpm -r test",
-    "lint": "corepack pnpm -r lint"
+    "lint": "corepack pnpm -r lint",
+    "scan:sample": "corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",

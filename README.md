@@ -25,16 +25,24 @@ From a checkout of this repository:
 ```sh
 corepack pnpm install
 corepack pnpm build
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
+```
+
+The sample fixture intentionally contains representative instruction issues. To
+scan the repository you are currently in, omit the path or pass `.`:
+
+```sh
 corepack pnpm --filter @skillops/cli skillops scan
+corepack pnpm --filter @skillops/cli skillops scan .
 ```
 
 The CLI supports human-readable output by default, JSON on stdout, and JSON
 reports written to disk:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan
-corepack pnpm --filter @skillops/cli skillops scan --json
-corepack pnpm --filter @skillops/cli skillops scan --output skillops-report.json
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --json
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output skillops-report.json
 ```
 
 ## Example Output
@@ -42,18 +50,24 @@ corepack pnpm --filter @skillops/cli skillops scan --output skillops-report.json
 Human-readable output is designed for local development and pull request logs:
 
 ```text
-Discovered 5 instruction files.
+Discovered 7 instruction files.
 - .codex/review.md (codex, 192 bytes)
 - .cursor/rules/typescript.md (cursor-rules, 194 bytes)
 - .github/copilot-instructions.md (github-copilot, 201 bytes)
 - AGENTS.md (agents, 297 bytes)
 - CLAUDE.md (claude, 269 bytes)
-Found 4 issues.
+- docs/ai-guidelines.md (docs-ai-guidelines, 170 bytes)
+- docs/ai/assistant.md (docs-ai, 163 bytes)
+Found 7 issues.
 - missing_owner [medium] in CLAUDE.md
   Instruction file is missing owner metadata.
   Evidence: owner metadata is missing or empty.
   Suggestion: Add owner metadata to the instruction file frontmatter, for example: owner: platform-team.
-- stale_review [medium] in AGENTS.md
+- stale_review [medium] in docs/ai-guidelines.md
+  Instruction file has invalid last_reviewed metadata.
+  Evidence: last_reviewed: not-a-date
+  Suggestion: Use a YYYY-MM-DD last_reviewed date, for example: last_reviewed: 2026-05-26.
+- stale_review [medium] in docs/ai/assistant.md
   Instruction file review metadata is stale.
   Evidence: last_reviewed: 2026-01-01 (145 days old)
   Suggestion: Review the instruction file and update last_reviewed to the current YYYY-MM-DD date.
@@ -61,6 +75,14 @@ Found 4 issues.
   Instruction file references missing file "docs/release.md".
   Evidence: Line 12: Review docs/release.md before documenting release changes.
   Suggestion: Create the referenced file or update the instruction to point at an existing path.
+- duplicate_instruction [low] in AGENTS.md
+  Instruction duplicates guidance also found in "CLAUDE.md".
+  Evidence: Line 11: Keep generated artifacts out of commits.
+  Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
+- duplicate_instruction [low] in CLAUDE.md
+  Instruction duplicates guidance also found in "AGENTS.md".
+  Evidence: Line 10: Keep generated artifacts out of commits.
+  Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
 - package_manager_conflict [medium] in CLAUDE.md
   Instruction file uses npm command "npm install" but this repository uses pnpm.
   Evidence: Line 11: Run npm install before changing dependencies.
@@ -72,13 +94,13 @@ Found 4 issues.
 Use JSON output for CI, scripts, or internal reporting:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan --json
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --json
 ```
 
 To write the report to a file:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan --output skillops-report.json
+corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output skillops-report.json
 ```
 
 Example JSON report:

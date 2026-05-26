@@ -28,6 +28,7 @@ type MakeDirectory = (dirPath: string, options: { recursive: true }) => Promise<
 
 type CliDependencies = {
   generatedAt?: () => Date;
+  invocationCwd?: string;
   makeDirectory?: MakeDirectory;
   scanRepository?: typeof scanRepositoryCore;
   stdout?: OutputWriter;
@@ -36,6 +37,7 @@ type CliDependencies = {
 
 export function createCli(dependencies: CliDependencies = {}): Command {
   const generatedAt = dependencies.generatedAt ?? (() => new Date());
+  const invocationCwd = dependencies.invocationCwd ?? process.env.INIT_CWD ?? process.cwd();
   const makeDirectory = dependencies.makeDirectory ?? mkdir;
   const scanRepository = dependencies.scanRepository ?? scanRepositoryCore;
   const stdout = dependencies.stdout ?? process.stdout;
@@ -49,11 +51,14 @@ export function createCli(dependencies: CliDependencies = {}): Command {
 
   program
     .command("scan")
-    .description("Scan the current repository for AI agent instruction issues.")
+    .description("Scan a repository for AI agent instruction issues.")
+    .argument("[path]", "Repository path to scan.", ".")
     .option("--json", "Print a machine-readable JSON report to stdout.")
     .option("--output <file>", "Write a machine-readable JSON report to a file.")
-    .action(async (options: ScanCommandOptions) => {
-      const result = await scanRepository();
+    .action(async (repositoryPath: string, options: ScanCommandOptions) => {
+      const result = await scanRepository({
+        cwd: path.resolve(invocationCwd, repositoryPath)
+      });
 
       if (options.json || options.output) {
         const report = createScanJsonReport(result, {

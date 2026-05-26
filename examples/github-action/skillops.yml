@@ -27,7 +27,7 @@ jobs:
         run: corepack pnpm build
 
       - name: Run SkillOps scan
-        run: corepack pnpm --filter @skillops/cli skillops scan
+        run: corepack pnpm --filter @skillops/cli skillops scan .
 
       - name: Generate SkillOps JSON report
-        run: corepack pnpm --filter @skillops/cli skillops scan --output skillops-report.json
+        run: corepack pnpm --filter @skillops/cli skillops scan . --output skillops-report.json
