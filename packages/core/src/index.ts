@@ -49,6 +49,16 @@ export type IssueType =
   | "package_manager_conflict"
   | "stale_review";
 
+export const issueTypes = [
+  "broken_file_reference",
+  "package_manager_conflict",
+  "duplicate_instruction",
+  "missing_owner",
+  "stale_review"
+] as const satisfies readonly IssueType[];
+
+export const issueSeverities = ["low", "medium", "high"] as const satisfies readonly IssueSeverity[];
+
 export type Issue = {
   id: string;
   type: IssueType;
@@ -71,6 +81,41 @@ export type ScanResult = {
   instructionFiles: InstructionFile[];
   issues: Issue[];
   message: string;
+};
+
+export type ScanJsonInstructionMetadata = Omit<InstructionMetadata, "last_reviewed"> & {
+  last_reviewed?: string;
+};
+
+export type ScanJsonInstructionFile = {
+  path: string;
+  relativePath: string;
+  type: InstructionFileType;
+  hasFrontmatter: boolean;
+  metadata: ScanJsonInstructionMetadata;
+  sizeBytes: number;
+  modifiedAt: string;
+};
+
+export type ScanJsonReportSummary = {
+  totalInstructionFiles: number;
+  totalIssues: number;
+  issuesByType: Record<IssueType, number>;
+  issuesBySeverity: Record<IssueSeverity, number>;
+};
+
+export type ScanJsonReport = {
+  generatedAt: string;
+  rootDir: string;
+  version: string;
+  summary: ScanJsonReportSummary;
+  instructionFiles: ScanJsonInstructionFile[];
+  issues: Issue[];
+};
+
+export type CreateScanJsonReportOptions = {
+  generatedAt?: Date;
+  version: string;
 };
 
 const instructionFilePatterns = [
@@ -477,6 +522,41 @@ export async function scanRepository(options: ScanOptions = {}): Promise<ScanRes
   };
 }
 
+export function createScanJsonReport(
+  result: ScanResult,
+  options: CreateScanJsonReportOptions
+): ScanJsonReport {
+  const issuesByType = createEmptyIssueTypeCounts();
+  const issuesBySeverity = createEmptyIssueSeverityCounts();
+
+  for (const issue of result.issues) {
+    issuesByType[issue.type] += 1;
+    issuesBySeverity[issue.severity] += 1;
+  }
+
+  return {
+    generatedAt: (options.generatedAt ?? new Date()).toISOString(),
+    rootDir: result.cwd,
+    version: options.version,
+    summary: {
+      totalInstructionFiles: result.instructionFiles.length,
+      totalIssues: result.issues.length,
+      issuesByType,
+      issuesBySeverity
+    },
+    instructionFiles: result.instructionFiles.map((instructionFile) => ({
+      path: instructionFile.path,
+      relativePath: instructionFile.relativePath,
+      type: instructionFile.type,
+      hasFrontmatter: instructionFile.hasFrontmatter,
+      metadata: serializeInstructionMetadata(instructionFile.metadata),
+      sizeBytes: instructionFile.sizeBytes,
+      modifiedAt: instructionFile.modifiedAt.toISOString()
+    })),
+    issues: result.issues
+  };
+}
+
 function extractNormalizedInstructionOccurrences(
   instructionFile: InstructionFile
 ): NormalizedInstructionOccurrence[] {
@@ -675,6 +755,38 @@ function formatDateOnly(date: Date): string {
   const day = String(date.getUTCDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function createEmptyIssueTypeCounts(): Record<IssueType, number> {
+  return Object.fromEntries(issueTypes.map((issueType) => [issueType, 0])) as Record<IssueType, number>;
+}
+
+function createEmptyIssueSeverityCounts(): Record<IssueSeverity, number> {
+  return Object.fromEntries(issueSeverities.map((severity) => [severity, 0])) as Record<IssueSeverity, number>;
+}
+
+function serializeInstructionMetadata(metadata: InstructionMetadata): ScanJsonInstructionMetadata {
+  const serializedMetadata: ScanJsonInstructionMetadata = {};
+
+  if (metadata.owner) {
+    serializedMetadata.owner = metadata.owner;
+  }
+
+  if (metadata.last_reviewed !== undefined) {
+    serializedMetadata.last_reviewed = metadata.last_reviewed instanceof Date
+      ? formatDateOnly(metadata.last_reviewed)
+      : metadata.last_reviewed;
+  }
+
+  if (metadata.tags) {
+    serializedMetadata.tags = metadata.tags;
+  }
+
+  if (metadata.status) {
+    serializedMetadata.status = metadata.status;
+  }
+
+  return serializedMetadata;
 }
 
 function formatMetadataValue(value: string | Date): string {

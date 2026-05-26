@@ -18,9 +18,11 @@ The initial CLI supports:
 
 ```sh
 skillops scan
+skillops scan --json
+skillops scan --output skillops-report.json
 ```
 
-For now, it prints:
+By default, it prints human-readable terminal output:
 
 ```text
 Discovered 7 instruction files.
@@ -60,6 +62,71 @@ Found 7 issues.
   Instruction file uses npm command "npm install" but this repository uses pnpm.
   Evidence: Line 11: Run npm install before changing dependencies.
   Suggestion: Replace npm commands with pnpm equivalents, or update the repository package manager metadata if npm is intended.
+```
+
+For CI, dashboards, and backend ingestion, use JSON output:
+
+```sh
+skillops scan --json
+```
+
+To write the same JSON report to a file:
+
+```sh
+skillops scan --output skillops-report.json
+```
+
+Example JSON output:
+
+```json
+{
+  "generatedAt": "2026-05-26T12:00:00.000Z",
+  "rootDir": "/workspace/example-repo",
+  "version": "0.1.0",
+  "summary": {
+    "totalInstructionFiles": 2,
+    "totalIssues": 3,
+    "issuesByType": {
+      "broken_file_reference": 1,
+      "package_manager_conflict": 1,
+      "duplicate_instruction": 0,
+      "missing_owner": 1,
+      "stale_review": 0
+    },
+    "issuesBySeverity": {
+      "low": 0,
+      "medium": 3,
+      "high": 0
+    }
+  },
+  "instructionFiles": [
+    {
+      "path": "/workspace/example-repo/AGENTS.md",
+      "relativePath": "AGENTS.md",
+      "type": "agents",
+      "hasFrontmatter": true,
+      "metadata": {
+        "owner": "platform-team",
+        "last_reviewed": "2026-05-26",
+        "tags": ["backend", "codex"],
+        "status": "active"
+      },
+      "sizeBytes": 297,
+      "modifiedAt": "2026-05-26T11:58:30.000Z"
+    }
+  ],
+  "issues": [
+    {
+      "id": "broken_file_reference:AGENTS.md:docs/release.md",
+      "type": "broken_file_reference",
+      "severity": "medium",
+      "filePath": "AGENTS.md",
+      "message": "Instruction file references missing file \"docs/release.md\".",
+      "evidence": "Line 12: Review docs/release.md before documenting release changes.",
+      "suggestion": "Create the referenced file or update the instruction to point at an existing path."
+    }
+  ]
+}
 ```
 
 ## Current MVP Scope

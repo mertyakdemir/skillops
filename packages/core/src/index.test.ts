@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  createScanJsonReport,
   detectBrokenFileReferences,
   detectDuplicateInstructions,
   detectInstructionMetadataIssues,
@@ -354,6 +355,99 @@ describe("scanRepository", () => {
           message: 'Instruction duplicates guidance also found in "AGENTS.md".'
         }
       ]
+    });
+  });
+});
+
+describe("createScanJsonReport", () => {
+  it("returns the JSON report shape without instruction file contents", async () => {
+    const rootDir = await createTempRepo();
+    const content = healthyInstructionContent("Agent instructions");
+    await writeRepoFile(rootDir, "AGENTS.md", content);
+    const result = await scanRepository({ cwd: rootDir });
+
+    const report = createScanJsonReport(result, {
+      generatedAt: metadataTestDate,
+      version: "0.1.0"
+    });
+
+    expect(report).toMatchObject({
+      generatedAt: "2026-05-26T00:00:00.000Z",
+      rootDir: path.resolve(rootDir),
+      version: "0.1.0",
+      summary: {
+        totalInstructionFiles: 1,
+        totalIssues: 0,
+        issuesByType: {
+          broken_file_reference: 0,
+          package_manager_conflict: 0,
+          duplicate_instruction: 0,
+          missing_owner: 0,
+          stale_review: 0
+        },
+        issuesBySeverity: {
+          low: 0,
+          medium: 0,
+          high: 0
+        }
+      },
+      instructionFiles: [
+        {
+          path: path.join(rootDir, "AGENTS.md"),
+          relativePath: "AGENTS.md",
+          type: "agents",
+          hasFrontmatter: true,
+          metadata: {
+            owner: "platform-team",
+            last_reviewed: dateOnly(),
+            tags: ["backend", "codex"],
+            status: "active"
+          },
+          sizeBytes: Buffer.byteLength(content),
+          modifiedAt: expect.any(String)
+        }
+      ],
+      issues: []
+    });
+    expect(report.instructionFiles[0]).not.toHaveProperty("content");
+    expect(report.instructionFiles[0]).not.toHaveProperty("contentWithoutFrontmatter");
+  });
+
+  it("counts issues by type and severity", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: "pnpm@10.11.0" }));
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      [
+        "Run npm install before changing dependencies.",
+        "Keep generated artifacts out of commits.",
+        "Use docs/missing.md before release changes."
+      ].join("\n")
+    );
+    await writeRepoFile(rootDir, "CLAUDE.md", "Keep generated artifacts out of commits.");
+    const result = await scanRepository({ cwd: rootDir });
+
+    const report = createScanJsonReport(result, {
+      generatedAt: metadataTestDate,
+      version: "0.1.0"
+    });
+
+    expect(report.summary).toEqual({
+      totalInstructionFiles: 2,
+      totalIssues: 8,
+      issuesByType: {
+        broken_file_reference: 1,
+        package_manager_conflict: 1,
+        duplicate_instruction: 2,
+        missing_owner: 2,
+        stale_review: 2
+      },
+      issuesBySeverity: {
+        low: 2,
+        medium: 6,
+        high: 0
+      }
     });
   });
 });
