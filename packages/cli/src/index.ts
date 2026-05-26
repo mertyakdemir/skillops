@@ -22,6 +22,24 @@ export function createCli(): Command {
       for (const file of result.instructionFiles) {
         console.log(`${chalk.green("-")} ${file.relativePath} ${chalk.dim(`(${file.type}, ${file.sizeBytes} bytes)`)}`);
       }
+
+      if (result.issues.length === 0) {
+        console.log(chalk.dim("No issues found."));
+        return;
+      }
+
+      const issueLabel = result.issues.length === 1 ? "issue" : "issues";
+      console.log(chalk.yellow(`Found ${result.issues.length} ${issueLabel}.`));
+
+      for (const issue of result.issues) {
+        console.log(`${chalk.yellow("-")} ${chalk.bold(issue.type)} ${chalk.dim(`[${issue.severity}]`)} in ${issue.filePath}`);
+        console.log(`  ${issue.message}`);
+        console.log(`  Evidence: ${issue.evidence}`);
+
+        if (issue.suggestion) {
+          console.log(`  Suggestion: ${issue.suggestion}`);
+        }
+      }
     });
 
   return program;

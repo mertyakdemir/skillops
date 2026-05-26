@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { discoverInstructionFiles, scanRepository } from "./index.js";
+import { detectBrokenFileReferences, discoverInstructionFiles, scanRepository } from "./index.js";
 
 async function createTempRepo(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "skillops-"));
@@ -86,7 +86,77 @@ describe("scanRepository", () => {
           type: "agents",
           content: "Agent instructions"
         }
+      ],
+      issues: []
+    });
+  });
+
+  it("returns broken file reference issues", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Use src/services/paymentService.ts for payment logic.");
+
+    await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
+      issues: [
+        {
+          type: "broken_file_reference",
+          severity: "medium",
+          filePath: "AGENTS.md",
+          message: 'Instruction file references missing file "src/services/paymentService.ts".'
+        }
       ]
     });
+  });
+});
+
+describe("detectBrokenFileReferences", () => {
+  it("detects missing file references", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Use src/services/paymentService.ts for payment behavior.");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    const issues = await detectBrokenFileReferences({ rootDir, instructionFiles });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        id: "broken_file_reference:AGENTS.md:src/services/paymentService.ts",
+        type: "broken_file_reference",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        evidence: "Line 1: Use src/services/paymentService.ts for payment behavior."
+      })
+    ]);
+  });
+
+  it("ignores existing file references", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Use apps/web/components/Button.tsx for shared button behavior.");
+    await writeRepoFile(rootDir, "apps/web/components/Button.tsx", "export function Button() {}");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectBrokenFileReferences({ rootDir, instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("ignores URLs", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      "Use https://example.com/docs/release.md and [docs/release.md](https://example.com/packages/api/src/index.ts)."
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectBrokenFileReferences({ rootDir, instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("ignores package names", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      "Install @skillops/core, @types/node, react, and eslint-config/custom before running checks."
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectBrokenFileReferences({ rootDir, instructionFiles })).resolves.toEqual([]);
   });
 });

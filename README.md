@@ -24,10 +24,15 @@ Discovered 7 instruction files.
 - .codex/review.md (codex, 99 bytes)
 - .cursor/rules/typescript.md (cursor-rules, 92 bytes)
 - .github/copilot-instructions.md (github-copilot, 100 bytes)
-- AGENTS.md (agents, 103 bytes)
+- AGENTS.md (agents, 162 bytes)
 - CLAUDE.md (claude, 104 bytes)
 - docs/ai-guidelines.md (docs-ai-guidelines, 72 bytes)
 - docs/ai/assistant.md (docs-ai, 72 bytes)
+Found 1 issue.
+- broken_file_reference [medium] in AGENTS.md
+  Instruction file references missing file "docs/release.md".
+  Evidence: Line 4: Review docs/release.md before documenting release changes.
+  Suggestion: Create the referenced file or update the instruction to point at an existing path.
 ```
 
 ## Current MVP Scope
