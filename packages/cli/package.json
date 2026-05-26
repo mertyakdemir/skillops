@@ -1,5 +1,5 @@
 {
-  "name": "@skillops/cli",
+  "name": "@mrtykdmr/skillops",
   "version": "0.1.0",
   "description": "Command-line interface for SkillOps.",
   "license": "MIT",
@@ -50,7 +50,7 @@
     "skillops": "node ./dist/index.js"
   },
   "dependencies": {
-    "@skillops/core": "workspace:*",
+    "@mrtykdmr/skillops-core": "workspace:*",
     "chalk": "^5.4.1",
     "commander": "^13.1.0"
   },

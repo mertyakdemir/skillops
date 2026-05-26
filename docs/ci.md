@@ -1,15 +1,12 @@
 # GitHub Actions CI
 
-Use SkillOps in pull request CI by running the CLI after dependencies are
-installed. SkillOps v0.1.0 ships a CLI package, not a dedicated GitHub Action
-package.
+Use SkillOps in pull request CI by running the CLI with npx. SkillOps v0.1.0
+ships a CLI package, not a dedicated GitHub Action package.
 
-## Workspace Workflow
+## npx Workflow
 
-The example workflow in `examples/github-action/skillops.yml` is for this
-repository or another repository that vendors the SkillOps pnpm workspace. Copy
-it into `.github/workflows` only when the repository contains these workspace
-packages:
+The example workflow in `examples/github-action/skillops.yml` runs SkillOps
+with npx. Copy it into `.github/workflows`:
 
 ```sh
 mkdir -p .github/workflows
@@ -17,31 +14,30 @@ cp examples/github-action/skillops.yml .github/workflows/skillops.yml
 ```
 
 The example workflow runs on `pull_request`, checks out the repository, sets up
-Node.js, enables Corepack, installs dependencies with pnpm, builds the project,
-and runs a SkillOps scan.
+Node.js, and runs a SkillOps scan with npx.
 
-This repository runs the local workspace CLI with:
+Run a default scan with:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan
+npx @mrtykdmr/skillops scan
 ```
 
 To scan a fixture or another directory, pass a path:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
+npx @mrtykdmr/skillops scan examples/sample-repo
 ```
 
 ## Installed Package Workflow
 
-If your repository installs `@skillops/cli` as a dependency, use the package
-binary instead:
+If your repository installs `@mrtykdmr/skillops` as a dependency, use the same
+npx command:
 
 ```sh
-corepack pnpm exec skillops scan
+npx @mrtykdmr/skillops scan
 ```
 
-For CI, add `@skillops/cli` to your repository's dev dependencies, commit the
+For CI, add `@mrtykdmr/skillops` to your repository's dev dependencies, commit the
 lockfile, and run:
 
 ```yaml
@@ -60,24 +56,21 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
-      - run: corepack pnpm exec skillops scan --output skillops-report.json
+      - run: npx @mrtykdmr/skillops scan --output skillops-report.json
 ```
 
 ## Run Locally
 
-From the repository root, install dependencies, build the project, and run the
-scanner:
+From the repository root, run the scanner with npx:
 
 ```sh
-corepack pnpm install
-corepack pnpm build
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
+npx @mrtykdmr/skillops scan examples/sample-repo
 ```
 
 To write a JSON report locally:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output skillops-report.json
+npx @mrtykdmr/skillops scan examples/sample-repo --output skillops-report.json
 ```
 
 ## JSON Output in CI
@@ -85,7 +78,7 @@ corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output
 SkillOps can write a machine-readable report for CI steps:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan . --output skillops-report.json
+npx @mrtykdmr/skillops scan . --output skillops-report.json
 ```
 
 The report includes summary counts, discovered instruction files, and issue
@@ -96,7 +89,7 @@ system.
 For stdout JSON instead of a file, use:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan . --json
+npx @mrtykdmr/skillops scan . --json
 ```
 
 ## Exit Codes

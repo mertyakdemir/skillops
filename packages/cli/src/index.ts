@@ -10,7 +10,7 @@ import {
   createScanJsonReport,
   scanRepository as scanRepositoryCore,
   type ScanResult
-} from "@skillops/core";
+} from "@mrtykdmr/skillops-core";
 
 const skillOpsVersion = "0.1.0";
 

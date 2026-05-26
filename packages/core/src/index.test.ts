@@ -612,7 +612,7 @@ describe("detectBrokenFileReferences", () => {
     await writeRepoFile(
       rootDir,
       "AGENTS.md",
-      "Install @skillops/core, @types/node, react, and eslint-config/custom before running checks."
+      "Install @mrtykdmr/skillops-core, @types/node, react, and eslint-config/custom before running checks."
     );
     const instructionFiles = await discoverInstructionFiles(rootDir);
 

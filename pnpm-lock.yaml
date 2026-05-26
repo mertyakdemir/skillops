@@ -20,7 +20,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@skillops/core':
+      '@mrtykdmr/skillops-core':
         specifier: workspace:*
         version: link:../core
       chalk:

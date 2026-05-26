@@ -20,29 +20,27 @@ follows outdated guidance.
 
 ## Quickstart
 
-From a checkout of this repository:
+Run SkillOps with npx:
 
 ```sh
-corepack pnpm install
-corepack pnpm build
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
+npx @mrtykdmr/skillops scan examples/sample-repo
 ```
 
 The sample fixture intentionally contains representative instruction issues. To
 scan the repository you are currently in, omit the path or pass `.`:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan
-corepack pnpm --filter @skillops/cli skillops scan .
+npx @mrtykdmr/skillops scan
+npx @mrtykdmr/skillops scan .
 ```
 
 The CLI supports human-readable output by default, JSON on stdout, and JSON
 reports written to disk:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --json
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output skillops-report.json
+npx @mrtykdmr/skillops scan examples/sample-repo
+npx @mrtykdmr/skillops scan examples/sample-repo --json
+npx @mrtykdmr/skillops scan examples/sample-repo --output skillops-report.json
 ```
 
 ## Example Output
@@ -94,13 +92,13 @@ Found 7 issues.
 Use JSON output for CI, scripts, or internal reporting:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --json
+npx @mrtykdmr/skillops scan examples/sample-repo --json
 ```
 
 To write the report to a file:
 
 ```sh
-corepack pnpm --filter @skillops/cli skillops scan examples/sample-repo --output skillops-report.json
+npx @mrtykdmr/skillops scan examples/sample-repo --output skillops-report.json
 ```
 
 Example JSON report:

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ScanResult } from "@skillops/core";
+import type { ScanResult } from "@mrtykdmr/skillops-core";
 
 import { createCli } from "./index.js";
 

@@ -17,17 +17,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Build project
-        run: corepack pnpm build
-
       - name: Run SkillOps scan
-        run: corepack pnpm --filter @skillops/cli skillops scan .
+        run: npx @mrtykdmr/skillops scan .
 
       - name: Generate SkillOps JSON report
-        run: corepack pnpm --filter @skillops/cli skillops scan . --output skillops-report.json
+        run: npx @mrtykdmr/skillops scan . --output skillops-report.json
