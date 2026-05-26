@@ -1,0 +1,5 @@
+{
+  "name": "skillops-sample-repo",
+  "private": true,
+  "packageManager": "pnpm@10.11.0"
+}

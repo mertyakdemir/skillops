@@ -4,7 +4,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { detectBrokenFileReferences, discoverInstructionFiles, scanRepository } from "./index.js";
+import {
+  detectBrokenFileReferences,
+  detectPackageManagerConflicts,
+  detectRepositoryPackageManager,
+  discoverInstructionFiles,
+  scanRepository
+} from "./index.js";
 
 async function createTempRepo(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "skillops-"));
@@ -70,6 +76,19 @@ describe("discoverInstructionFiles", () => {
 
     await expect(discoverInstructionFiles(rootDir)).resolves.toHaveLength(1);
   });
+
+  it("discovers CLAUDE.md as a Claude Code instruction file", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "CLAUDE.md", "Claude Code instructions");
+
+    await expect(discoverInstructionFiles(rootDir)).resolves.toMatchObject([
+      {
+        relativePath: "CLAUDE.md",
+        type: "claude",
+        content: "Claude Code instructions"
+      }
+    ]);
+  });
 });
 
 describe("scanRepository", () => {
@@ -104,6 +123,68 @@ describe("scanRepository", () => {
           message: 'Instruction file references missing file "src/services/paymentService.ts".'
         }
       ]
+    });
+  });
+
+  it("returns package manager conflict issues", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: "pnpm@10.11.0" }));
+    await writeRepoFile(rootDir, "AGENTS.md", "Run npm install.");
+
+    await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
+      issues: [
+        {
+          id: "package_manager_conflict:AGENTS.md:1:npm_install",
+          type: "package_manager_conflict",
+          severity: "medium",
+          filePath: "AGENTS.md",
+          message: 'Instruction file uses npm command "npm install" but this repository uses pnpm.',
+          evidence: "Line 1: Run npm install."
+        }
+      ]
+    });
+  });
+});
+
+describe("detectRepositoryPackageManager", () => {
+  it.each([
+    ["pnpm", "pnpm@10.11.0"],
+    ["npm", "npm@10.8.2"],
+    ["yarn", "yarn@4.9.1"],
+    ["bun", "bun@1.2.15"]
+  ] as const)("detects %s from package.json packageManager", async (expectedPackageManager, packageManagerField) => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: packageManagerField }));
+
+    await expect(detectRepositoryPackageManager(rootDir)).resolves.toEqual({
+      name: expectedPackageManager,
+      source: "package.json packageManager"
+    });
+  });
+
+  it.each([
+    ["pnpm", "pnpm-lock.yaml"],
+    ["npm", "package-lock.json"],
+    ["yarn", "yarn.lock"],
+    ["bun", "bun.lockb"]
+  ] as const)("detects %s from %s", async (expectedPackageManager, lockfileName) => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, lockfileName, "lockfile");
+
+    await expect(detectRepositoryPackageManager(rootDir)).resolves.toEqual({
+      name: expectedPackageManager,
+      source: lockfileName
+    });
+  });
+
+  it("prefers package.json packageManager over lockfiles", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: "bun@1.2.15" }));
+    await writeRepoFile(rootDir, "pnpm-lock.yaml", "lockfile");
+
+    await expect(detectRepositoryPackageManager(rootDir)).resolves.toEqual({
+      name: "bun",
+      source: "package.json packageManager"
     });
   });
 });
@@ -158,5 +239,57 @@ describe("detectBrokenFileReferences", () => {
     const instructionFiles = await discoverInstructionFiles(rootDir);
 
     await expect(detectBrokenFileReferences({ rootDir, instructionFiles })).resolves.toEqual([]);
+  });
+});
+
+describe("detectPackageManagerConflicts", () => {
+  it("detects conflicting package manager commands", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: "pnpm@10.11.0" }));
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      "Run npm install, npm run build, yarn install, yarn test, bun install, and bun test."
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    const issues = await detectPackageManagerConflicts({ rootDir, instructionFiles });
+
+    expect(issues).toHaveLength(6);
+    expect(issues[0]).toMatchObject({
+      id: "package_manager_conflict:AGENTS.md:1:npm_install",
+      type: "package_manager_conflict",
+      severity: "medium",
+      filePath: "AGENTS.md",
+      evidence: "Line 1: Run npm install, npm run build, yarn install, yarn test, bun install, and bun test."
+    });
+    expect(issues.map((issue) => issue.message)).toEqual(
+      expect.arrayContaining([
+        'Instruction file uses npm command "npm install" but this repository uses pnpm.',
+        'Instruction file uses npm command "npm run" but this repository uses pnpm.',
+        'Instruction file uses yarn command "yarn install" but this repository uses pnpm.',
+        'Instruction file uses yarn command "yarn" but this repository uses pnpm.',
+        'Instruction file uses bun command "bun install" but this repository uses pnpm.',
+        'Instruction file uses bun command "bun" but this repository uses pnpm.'
+      ])
+    );
+  });
+
+  it("ignores commands that match the repository package manager", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "yarn.lock", "lockfile");
+    await writeRepoFile(rootDir, "AGENTS.md", "Run yarn install and yarn test before handing off.");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectPackageManagerConflicts({ rootDir, instructionFiles })).resolves.toEqual([]);
+  });
+
+  it("ignores package manager lockfile and packageManager text", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "pnpm-lock.yaml", "lockfile");
+    await writeRepoFile(rootDir, "AGENTS.md", 'Keep yarn.lock deleted and leave packageManager "npm@10" unchanged.');
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectPackageManagerConflicts({ rootDir, instructionFiles })).resolves.toEqual([]);
   });
 });

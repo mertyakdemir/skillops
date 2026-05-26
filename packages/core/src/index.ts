@@ -30,14 +30,23 @@ export type InstructionFile = {
 
 export type IssueSeverity = "low" | "medium" | "high";
 
+export type IssueType = "broken_file_reference" | "package_manager_conflict";
+
 export type Issue = {
   id: string;
-  type: "broken_file_reference";
+  type: IssueType;
   severity: IssueSeverity;
   filePath: string;
   message: string;
   evidence: string;
   suggestion?: string;
+};
+
+export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+
+export type RepositoryPackageManager = {
+  name: PackageManager;
+  source: string;
 };
 
 export type ScanResult = {
@@ -62,6 +71,31 @@ const externalMarkdownLinkPattern = /!?\[[^\]]*]\((?:https?|ftp):\/\/[^)]*\)/gi;
 const urlPattern = /\b(?:https?|ftp):\/\/[^\s<>)\]]+/gi;
 const filePathCandidatePattern =
   /(?:^|[\s([{"'`<:])((?:\.{1,2}\/)*[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/[A-Za-z0-9._-]+\.[A-Za-z0-9][A-Za-z0-9_-]{0,15})(?=$|[\s)\]}>"'`,;!?:.])/g;
+const packageManagerNames = ["npm", "pnpm", "yarn", "bun"] as const;
+const lockfilePackageManagers: Array<{ fileName: string; packageManager: PackageManager }> = [
+  { fileName: "pnpm-lock.yaml", packageManager: "pnpm" },
+  { fileName: "yarn.lock", packageManager: "yarn" },
+  { fileName: "package-lock.json", packageManager: "npm" },
+  { fileName: "bun.lockb", packageManager: "bun" }
+];
+const packageManagerCommandPatterns: Array<{ packageManager: PackageManager; pattern: RegExp }> = [
+  {
+    packageManager: "npm",
+    pattern: /(^|[^\w./@:-])(npm\s+(?:install|run)(?![\w/@:-]|\.[A-Za-z0-9_-]))/gi
+  },
+  {
+    packageManager: "yarn",
+    pattern: /(^|[^\w./@:-])(yarn(?:\s+install)?(?![\w/@:-]|\.[A-Za-z0-9_-]))/gi
+  },
+  {
+    packageManager: "pnpm",
+    pattern: /(^|[^\w./@:-])(pnpm(?:\s+install)?(?![\w/@:-]|\.[A-Za-z0-9_-]))/gi
+  },
+  {
+    packageManager: "bun",
+    pattern: /(^|[^\w./@:-])(bun(?:\s+install)?(?![\w/@:-]|\.[A-Za-z0-9_-]))/gi
+  }
+];
 
 function getInstructionFileType(relativePath: string): InstructionFileType {
   if (relativePath === "AGENTS.md") {
@@ -183,11 +217,92 @@ export async function detectBrokenFileReferences(params: {
   return issues;
 }
 
+export async function detectRepositoryPackageManager(
+  rootDir: string
+): Promise<RepositoryPackageManager | undefined> {
+  const resolvedRootDir = path.resolve(rootDir);
+  const packageJsonPackageManager = await detectPackageManagerFromPackageJson(resolvedRootDir);
+
+  if (packageJsonPackageManager) {
+    return packageJsonPackageManager;
+  }
+
+  for (const lockfilePackageManager of lockfilePackageManagers) {
+    const lockfilePath = path.join(resolvedRootDir, lockfilePackageManager.fileName);
+
+    if (await fileExists(lockfilePath)) {
+      return {
+        name: lockfilePackageManager.packageManager,
+        source: lockfilePackageManager.fileName
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export async function detectPackageManagerConflicts(params: {
+  rootDir: string;
+  instructionFiles: InstructionFile[];
+}): Promise<Issue[]> {
+  const repositoryPackageManager = await detectRepositoryPackageManager(params.rootDir);
+
+  if (!repositoryPackageManager) {
+    return [];
+  }
+
+  const issues: Issue[] = [];
+  const seenIssueKeys = new Set<string>();
+
+  for (const instructionFile of params.instructionFiles) {
+    const lines = instructionFile.content.split(/\r?\n/);
+
+    for (const [lineIndex, line] of lines.entries()) {
+      for (const commandPattern of packageManagerCommandPatterns) {
+        if (commandPattern.packageManager === repositoryPackageManager.name) {
+          continue;
+        }
+
+        for (const match of line.matchAll(commandPattern.pattern)) {
+          const command = match[2]?.replace(/\s+/g, " ").trim();
+
+          if (!command) {
+            continue;
+          }
+
+          const issueKey = `${instructionFile.relativePath}\0${lineIndex}\0${command.toLowerCase()}`;
+
+          if (seenIssueKeys.has(issueKey)) {
+            continue;
+          }
+
+          seenIssueKeys.add(issueKey);
+          issues.push({
+            id: `package_manager_conflict:${instructionFile.relativePath}:${lineIndex + 1}:${command.toLowerCase().replace(/\s+/g, "_")}`,
+            type: "package_manager_conflict",
+            severity: "medium",
+            filePath: instructionFile.relativePath,
+            message: `Instruction file uses ${commandPattern.packageManager} command "${command}" but this repository uses ${repositoryPackageManager.name}.`,
+            evidence: `Line ${lineIndex + 1}: ${line.trim()}`,
+            suggestion: `Replace ${commandPattern.packageManager} commands with ${repositoryPackageManager.name} equivalents, or update the repository package manager metadata if ${commandPattern.packageManager} is intended.`
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
 export async function scanRepository(options: ScanOptions = {}): Promise<ScanResult> {
   const parsedOptions = scanOptionsSchema.parse(options);
   const cwd = path.resolve(parsedOptions.cwd);
   const instructionFiles = await discoverInstructionFiles(cwd);
-  const issues = await detectBrokenFileReferences({ rootDir: cwd, instructionFiles });
+  const [brokenFileReferenceIssues, packageManagerConflictIssues] = await Promise.all([
+    detectBrokenFileReferences({ rootDir: cwd, instructionFiles }),
+    detectPackageManagerConflicts({ rootDir: cwd, instructionFiles })
+  ]);
+  const issues = [...brokenFileReferenceIssues, ...packageManagerConflictIssues];
   const instructionFileLabel = instructionFiles.length === 1 ? "instruction file" : "instruction files";
 
   return {
@@ -244,6 +359,52 @@ async function fileExists(filePath: string): Promise<boolean> {
 
     throw error;
   }
+}
+
+async function detectPackageManagerFromPackageJson(
+  rootDir: string
+): Promise<RepositoryPackageManager | undefined> {
+  const packageJsonPath = path.join(rootDir, "package.json");
+
+  if (!(await fileExists(packageJsonPath))) {
+    return undefined;
+  }
+
+  const packageJsonContent = await readFile(packageJsonPath, "utf8");
+  const packageJson = JSON.parse(packageJsonContent) as unknown;
+
+  if (!isRecord(packageJson) || typeof packageJson.packageManager !== "string") {
+    return undefined;
+  }
+
+  const packageManager = parsePackageManagerName(packageJson.packageManager);
+
+  if (!packageManager) {
+    return undefined;
+  }
+
+  return {
+    name: packageManager,
+    source: "package.json packageManager"
+  };
+}
+
+function parsePackageManagerName(packageManagerField: string): PackageManager | undefined {
+  const packageManagerName = packageManagerField.split("@")[0];
+
+  if (isPackageManager(packageManagerName)) {
+    return packageManagerName;
+  }
+
+  return undefined;
+}
+
+function isPackageManager(value: string | undefined): value is PackageManager {
+  return packageManagerNames.some((packageManagerName) => packageManagerName === value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isMissingPathError(error: unknown): boolean {
