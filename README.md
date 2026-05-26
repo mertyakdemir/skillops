@@ -20,14 +20,21 @@ skillops scan
 For now, it prints:
 
 ```text
-SkillOps scanner coming soon.
+Discovered 7 instruction files.
+- .codex/review.md (codex, 99 bytes)
+- .cursor/rules/typescript.md (cursor-rules, 92 bytes)
+- .github/copilot-instructions.md (github-copilot, 100 bytes)
+- AGENTS.md (agents, 103 bytes)
+- CLAUDE.md (claude, 104 bytes)
+- docs/ai-guidelines.md (docs-ai-guidelines, 72 bytes)
+- docs/ai/assistant.md (docs-ai, 72 bytes)
 ```
 
 ## Current MVP Scope
 
 The MVP is focused on repository scanning for AI-agent instruction files such
-as `AGENTS.md`, `.cursorrules`, and similar project guidance. The first
-implementation will prioritize:
+as `AGENTS.md`, `CLAUDE.md`, `.codex/**/*.md`, `.cursor/rules/**/*.md`, and
+similar project guidance. The first implementation will prioritize:
 
 - discovering instruction files across a repository
 - identifying stale or broken references

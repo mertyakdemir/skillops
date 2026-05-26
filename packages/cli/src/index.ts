@@ -18,6 +18,10 @@ export function createCli(): Command {
     .action(async () => {
       const result = await scanRepository();
       console.log(chalk.cyan(result.message));
+
+      for (const file of result.instructionFiles) {
+        console.log(`${chalk.green("-")} ${file.relativePath} ${chalk.dim(`(${file.type}, ${file.sizeBytes} bytes)`)}`);
+      }
     });
 
   return program;
