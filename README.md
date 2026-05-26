@@ -24,29 +24,41 @@ For now, it prints:
 
 ```text
 Discovered 7 instruction files.
-- .codex/review.md (codex, 99 bytes)
-- .cursor/rules/typescript.md (cursor-rules, 92 bytes)
-- .github/copilot-instructions.md (github-copilot, 100 bytes)
-- AGENTS.md (agents, 203 bytes)
-- CLAUDE.md (claude, 191 bytes)
-- docs/ai-guidelines.md (docs-ai-guidelines, 72 bytes)
-- docs/ai/assistant.md (docs-ai, 72 bytes)
-Found 4 issues.
+- .codex/review.md (codex, 192 bytes)
+- .cursor/rules/typescript.md (cursor-rules, 194 bytes)
+- .github/copilot-instructions.md (github-copilot, 201 bytes)
+- AGENTS.md (agents, 297 bytes)
+- CLAUDE.md (claude, 269 bytes)
+- docs/ai-guidelines.md (docs-ai-guidelines, 170 bytes)
+- docs/ai/assistant.md (docs-ai, 163 bytes)
+Found 7 issues.
+- missing_owner [medium] in CLAUDE.md
+  Instruction file is missing owner metadata.
+  Evidence: owner metadata is missing or empty.
+  Suggestion: Add owner metadata to the instruction file frontmatter, for example: owner: platform-team.
+- stale_review [medium] in docs/ai-guidelines.md
+  Instruction file has invalid last_reviewed metadata.
+  Evidence: last_reviewed: not-a-date
+  Suggestion: Use a YYYY-MM-DD last_reviewed date, for example: last_reviewed: 2026-05-26.
+- stale_review [medium] in docs/ai/assistant.md
+  Instruction file review metadata is stale.
+  Evidence: last_reviewed: 2026-01-01 (145 days old)
+  Suggestion: Review the instruction file and update last_reviewed to the current YYYY-MM-DD date.
 - broken_file_reference [medium] in AGENTS.md
   Instruction file references missing file "docs/release.md".
-  Evidence: Line 5: Review docs/release.md before documenting release changes.
+  Evidence: Line 12: Review docs/release.md before documenting release changes.
   Suggestion: Create the referenced file or update the instruction to point at an existing path.
 - duplicate_instruction [low] in AGENTS.md
   Instruction duplicates guidance also found in "CLAUDE.md".
-  Evidence: Line 4: Keep generated artifacts out of commits.
+  Evidence: Line 11: Keep generated artifacts out of commits.
   Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
 - duplicate_instruction [low] in CLAUDE.md
   Instruction duplicates guidance also found in "AGENTS.md".
-  Evidence: Line 4: Keep generated artifacts out of commits.
+  Evidence: Line 10: Keep generated artifacts out of commits.
   Suggestion: Keep this guidance in a single instruction file or remove or reword the duplicate.
 - package_manager_conflict [medium] in CLAUDE.md
   Instruction file uses npm command "npm install" but this repository uses pnpm.
-  Evidence: Line 5: Run npm install before changing dependencies.
+  Evidence: Line 11: Run npm install before changing dependencies.
   Suggestion: Replace npm commands with pnpm equivalents, or update the repository package manager metadata if npm is intended.
 ```
 

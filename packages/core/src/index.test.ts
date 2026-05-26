@@ -7,11 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   detectBrokenFileReferences,
   detectDuplicateInstructions,
+  detectInstructionMetadataIssues,
   detectPackageManagerConflicts,
   detectRepositoryPackageManager,
   discoverInstructionFiles,
   scanRepository
 } from "./index.js";
+
+const metadataTestDate = new Date("2026-05-26T00:00:00.000Z");
 
 async function createTempRepo(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "skillops-"));
@@ -23,17 +26,41 @@ async function writeRepoFile(rootDir: string, relativePath: string, content: str
   await writeFile(filePath, content);
 }
 
+function dateOnly(date: Date = new Date()): string {
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function healthyInstructionContent(content: string): string {
+  return instructionContentWithFrontmatter(
+    [
+      "owner: platform-team",
+      `last_reviewed: ${dateOnly()}`,
+      "tags: [backend, codex]",
+      "status: active"
+    ],
+    content
+  );
+}
+
+function instructionContentWithFrontmatter(frontmatterLines: string[], content: string): string {
+  return ["---", ...frontmatterLines, "---", content].join("\n");
+}
+
 describe("discoverInstructionFiles", () => {
   it("discovers supported AI instruction files with metadata", async () => {
     const rootDir = await createTempRepo();
     const files = [
-      ["AGENTS.md", "Agent instructions"],
-      ["CLAUDE.md", "Claude instructions"],
-      [".codex/prompts/review.md", "Codex instructions"],
-      [".cursor/rules/typescript/style.md", "Cursor rules"],
-      [".github/copilot-instructions.md", "Copilot instructions"],
-      ["docs/ai/usage.md", "AI docs"],
-      ["docs/ai-guidelines.md", "AI guidelines"]
+      ["AGENTS.md", healthyInstructionContent("Agent instructions")],
+      ["CLAUDE.md", healthyInstructionContent("Claude instructions")],
+      [".codex/prompts/review.md", healthyInstructionContent("Codex instructions")],
+      [".cursor/rules/typescript/style.md", healthyInstructionContent("Cursor rules")],
+      [".github/copilot-instructions.md", healthyInstructionContent("Copilot instructions")],
+      ["docs/ai/usage.md", healthyInstructionContent("AI docs")],
+      ["docs/ai-guidelines.md", healthyInstructionContent("AI guidelines")]
     ] as const;
 
     await Promise.all(files.map(([relativePath, content]) => writeRepoFile(rootDir, relativePath, content)));
@@ -63,6 +90,15 @@ describe("discoverInstructionFiles", () => {
     for (const file of discoveredFiles) {
       expect(file.path).toBe(path.resolve(rootDir, file.relativePath));
       expect(file.content).toEqual(expect.any(String));
+      expect(file.contentWithoutFrontmatter).not.toContain("owner: platform-team");
+      expect(file.contentStartLine).toBe(7);
+      expect(file.hasFrontmatter).toBe(true);
+      expect(file.metadata).toMatchObject({
+        owner: "platform-team",
+        tags: ["backend", "codex"],
+        status: "active"
+      });
+      expect(file.metadata.last_reviewed).toBeDefined();
       expect(file.sizeBytes).toBeGreaterThan(0);
       expect(file.modifiedAt).toBeInstanceOf(Date);
     }
@@ -80,13 +116,159 @@ describe("discoverInstructionFiles", () => {
 
   it("discovers CLAUDE.md as a Claude Code instruction file", async () => {
     const rootDir = await createTempRepo();
-    await writeRepoFile(rootDir, "CLAUDE.md", "Claude Code instructions");
+    const content = healthyInstructionContent("Claude Code instructions");
+    await writeRepoFile(rootDir, "CLAUDE.md", content);
 
     await expect(discoverInstructionFiles(rootDir)).resolves.toMatchObject([
       {
         relativePath: "CLAUDE.md",
         type: "claude",
-        content: "Claude Code instructions"
+        content,
+        contentWithoutFrontmatter: "Claude Code instructions"
+      }
+    ]);
+  });
+});
+
+describe("detectInstructionMetadataIssues", () => {
+  it("detects missing owner", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter([`last_reviewed: ${dateOnly(metadataTestDate)}`], "Agent instructions")
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([
+      {
+        id: "missing_owner:AGENTS.md",
+        type: "missing_owner",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file is missing owner metadata.",
+        evidence: "owner metadata is missing or empty.",
+        suggestion: "Add owner metadata to the instruction file frontmatter, for example: owner: platform-team."
+      }
+    ]);
+  });
+
+  it("does not report missing owner when owner exists", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter(
+        ["owner: platform-team", `last_reviewed: ${dateOnly(metadataTestDate)}`],
+        "Agent instructions"
+      )
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([]);
+  });
+
+  it("detects missing last_reviewed", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter(["owner: platform-team"], "Agent instructions")
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([
+      {
+        id: "stale_review:AGENTS.md",
+        type: "stale_review",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file is missing last_reviewed metadata.",
+        evidence: "last_reviewed metadata is missing.",
+        suggestion: "Add a recent last_reviewed date in YYYY-MM-DD format to the instruction file frontmatter."
+      }
+    ]);
+  });
+
+  it("detects old last_reviewed", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter(["owner: platform-team", "last_reviewed: 2026-01-01"], "Agent instructions")
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([
+      {
+        id: "stale_review:AGENTS.md",
+        type: "stale_review",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file review metadata is stale.",
+        evidence: "last_reviewed: 2026-01-01 (145 days old)",
+        suggestion: "Review the instruction file and update last_reviewed to the current YYYY-MM-DD date."
+      }
+    ]);
+  });
+
+  it("does not report stale_review for recent last_reviewed", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter(["owner: platform-team", "last_reviewed: 2026-05-01"], "Agent instructions")
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([]);
+  });
+
+  it("handles invalid last_reviewed safely", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      instructionContentWithFrontmatter(["owner: platform-team", "last_reviewed: not-a-date"], "Agent instructions")
+    );
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([
+      {
+        id: "stale_review:AGENTS.md",
+        type: "stale_review",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file has invalid last_reviewed metadata.",
+        evidence: "last_reviewed: not-a-date",
+        suggestion: "Use a YYYY-MM-DD last_reviewed date, for example: last_reviewed: 2026-05-26."
+      }
+    ]);
+  });
+
+  it("reports missing owner and stale review when frontmatter is missing", async () => {
+    const rootDir = await createTempRepo();
+    await writeRepoFile(rootDir, "AGENTS.md", "Agent instructions");
+    const instructionFiles = await discoverInstructionFiles(rootDir);
+
+    await expect(detectInstructionMetadataIssues({ instructionFiles, currentDate: metadataTestDate })).resolves.toEqual([
+      {
+        id: "missing_owner:AGENTS.md",
+        type: "missing_owner",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file is missing owner metadata.",
+        evidence: "No frontmatter metadata found.",
+        suggestion: "Add owner metadata to the instruction file frontmatter, for example: owner: platform-team."
+      },
+      {
+        id: "stale_review:AGENTS.md",
+        type: "stale_review",
+        severity: "medium",
+        filePath: "AGENTS.md",
+        message: "Instruction file is missing last_reviewed metadata.",
+        evidence: "No frontmatter metadata found.",
+        suggestion: "Add a recent last_reviewed date in YYYY-MM-DD format to the instruction file frontmatter."
       }
     ]);
   });
@@ -95,7 +277,8 @@ describe("discoverInstructionFiles", () => {
 describe("scanRepository", () => {
   it("returns discovered instruction files", async () => {
     const rootDir = await createTempRepo();
-    await writeRepoFile(rootDir, "AGENTS.md", "Agent instructions");
+    const content = healthyInstructionContent("Agent instructions");
+    await writeRepoFile(rootDir, "AGENTS.md", content);
 
     await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
       cwd: path.resolve(rootDir),
@@ -104,7 +287,8 @@ describe("scanRepository", () => {
         {
           relativePath: "AGENTS.md",
           type: "agents",
-          content: "Agent instructions"
+          content,
+          contentWithoutFrontmatter: "Agent instructions"
         }
       ],
       issues: []
@@ -113,7 +297,11 @@ describe("scanRepository", () => {
 
   it("returns broken file reference issues", async () => {
     const rootDir = await createTempRepo();
-    await writeRepoFile(rootDir, "AGENTS.md", "Use src/services/paymentService.ts for payment logic.");
+    await writeRepoFile(
+      rootDir,
+      "AGENTS.md",
+      healthyInstructionContent("Use src/services/paymentService.ts for payment logic.")
+    );
 
     await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
       issues: [
@@ -130,17 +318,17 @@ describe("scanRepository", () => {
   it("returns package manager conflict issues", async () => {
     const rootDir = await createTempRepo();
     await writeRepoFile(rootDir, "package.json", JSON.stringify({ packageManager: "pnpm@10.11.0" }));
-    await writeRepoFile(rootDir, "AGENTS.md", "Run npm install.");
+    await writeRepoFile(rootDir, "AGENTS.md", healthyInstructionContent("Run npm install."));
 
     await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
       issues: [
         {
-          id: "package_manager_conflict:AGENTS.md:1:npm_install",
+          id: "package_manager_conflict:AGENTS.md:7:npm_install",
           type: "package_manager_conflict",
           severity: "medium",
           filePath: "AGENTS.md",
           message: 'Instruction file uses npm command "npm install" but this repository uses pnpm.',
-          evidence: "Line 1: Run npm install."
+          evidence: "Line 7: Run npm install."
         }
       ]
     });
@@ -148,8 +336,8 @@ describe("scanRepository", () => {
 
   it("returns duplicate instruction issues", async () => {
     const rootDir = await createTempRepo();
-    await writeRepoFile(rootDir, "AGENTS.md", "Keep generated artifacts out of commits.");
-    await writeRepoFile(rootDir, "CLAUDE.md", "Keep generated artifacts out of commits.");
+    await writeRepoFile(rootDir, "AGENTS.md", healthyInstructionContent("Keep generated artifacts out of commits."));
+    await writeRepoFile(rootDir, "CLAUDE.md", healthyInstructionContent("Keep generated artifacts out of commits."));
 
     await expect(scanRepository({ cwd: rootDir })).resolves.toMatchObject({
       issues: [

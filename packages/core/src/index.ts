@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import fg from "fast-glob";
+import matter from "gray-matter";
 import { z } from "zod";
 
 export const scanOptionsSchema = z.object({
@@ -24,13 +25,29 @@ export type InstructionFile = {
   relativePath: string;
   type: InstructionFileType;
   content: string;
+  contentWithoutFrontmatter: string;
+  contentStartLine: number;
+  hasFrontmatter: boolean;
+  metadata: InstructionMetadata;
   sizeBytes: number;
   modifiedAt: Date;
 };
 
+export type InstructionMetadata = {
+  owner?: string;
+  last_reviewed?: string | Date;
+  tags?: string[];
+  status?: string;
+};
+
 export type IssueSeverity = "low" | "medium" | "high";
 
-export type IssueType = "broken_file_reference" | "duplicate_instruction" | "package_manager_conflict";
+export type IssueType =
+  | "broken_file_reference"
+  | "duplicate_instruction"
+  | "missing_owner"
+  | "package_manager_conflict"
+  | "stale_review";
 
 export type Issue = {
   id: string;
@@ -68,6 +85,8 @@ const instructionFilePatterns = [
 
 const ignoredPaths = ["**/node_modules/**", "**/dist/**", "**/.git/**"];
 const minimumDuplicateInstructionLength = 20;
+const staleReviewThresholdDays = 90;
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const markdownHeadingPattern = /^\s{0,3}#{1,6}(?:\s|$)/;
 const codeFencePattern = /^\s*(`{3,}|~{3,})/;
 const externalMarkdownLinkPattern = /!?\[[^\]]*]\((?:https?|ftp):\/\/[^)]*\)/gi;
@@ -155,17 +174,94 @@ export async function discoverInstructionFiles(rootDir: string): Promise<Instruc
         readFile(filePath, "utf8"),
         stat(filePath)
       ]);
+      const parsedContent = parseInstructionFileContent(content);
 
       return {
         path: filePath,
         relativePath,
         type: getInstructionFileType(relativePath),
         content,
+        contentWithoutFrontmatter: parsedContent.contentWithoutFrontmatter,
+        contentStartLine: parsedContent.contentStartLine,
+        hasFrontmatter: parsedContent.hasFrontmatter,
+        metadata: parsedContent.metadata,
         sizeBytes: fileStats.size,
         modifiedAt: fileStats.mtime
       };
     })
   );
+}
+
+export async function detectInstructionMetadataIssues(params: {
+  instructionFiles: InstructionFile[];
+  currentDate?: Date;
+}): Promise<Issue[]> {
+  const currentDate = toUtcDateOnly(params.currentDate ?? new Date());
+  const issues: Issue[] = [];
+
+  for (const instructionFile of params.instructionFiles) {
+    if (!instructionFile.metadata.owner) {
+      issues.push({
+        id: `missing_owner:${instructionFile.relativePath}`,
+        type: "missing_owner",
+        severity: "medium",
+        filePath: instructionFile.relativePath,
+        message: "Instruction file is missing owner metadata.",
+        evidence: instructionFile.hasFrontmatter
+          ? "owner metadata is missing or empty."
+          : "No frontmatter metadata found.",
+        suggestion: "Add owner metadata to the instruction file frontmatter, for example: owner: platform-team."
+      });
+    }
+
+    const lastReviewed = instructionFile.metadata.last_reviewed;
+
+    if (lastReviewed === undefined) {
+      issues.push({
+        id: `stale_review:${instructionFile.relativePath}`,
+        type: "stale_review",
+        severity: "medium",
+        filePath: instructionFile.relativePath,
+        message: "Instruction file is missing last_reviewed metadata.",
+        evidence: instructionFile.hasFrontmatter
+          ? "last_reviewed metadata is missing."
+          : "No frontmatter metadata found.",
+        suggestion: "Add a recent last_reviewed date in YYYY-MM-DD format to the instruction file frontmatter."
+      });
+      continue;
+    }
+
+    const parsedLastReviewed = parseLastReviewedDate(lastReviewed);
+
+    if (!parsedLastReviewed) {
+      issues.push({
+        id: `stale_review:${instructionFile.relativePath}`,
+        type: "stale_review",
+        severity: "medium",
+        filePath: instructionFile.relativePath,
+        message: "Instruction file has invalid last_reviewed metadata.",
+        evidence: `last_reviewed: ${formatMetadataValue(lastReviewed)}`,
+        suggestion: `Use a YYYY-MM-DD last_reviewed date, for example: last_reviewed: ${formatDateOnly(currentDate)}.`
+      });
+      continue;
+    }
+
+    const daysSinceReview = Math.floor((currentDate.getTime() - parsedLastReviewed.getTime()) / millisecondsPerDay);
+
+    if (daysSinceReview > staleReviewThresholdDays) {
+      issues.push({
+        id: `stale_review:${instructionFile.relativePath}`,
+        type: "stale_review",
+        severity: "medium",
+        filePath: instructionFile.relativePath,
+        message: "Instruction file review metadata is stale.",
+        evidence: `last_reviewed: ${formatDateOnly(parsedLastReviewed)} (${daysSinceReview} days old)`,
+        suggestion: "Review the instruction file and update last_reviewed to the current YYYY-MM-DD date."
+      });
+    }
+  }
+
+  return issues;
 }
 
 export async function detectBrokenFileReferences(params: {
@@ -177,9 +273,7 @@ export async function detectBrokenFileReferences(params: {
   const seenIssueKeys = new Set<string>();
 
   for (const instructionFile of params.instructionFiles) {
-    const lines = instructionFile.content.split(/\r?\n/);
-
-    for (const [lineIndex, line] of lines.entries()) {
+    for (const { line, lineNumber } of getInstructionContentLines(instructionFile)) {
       const lineWithoutUrls = line.replace(externalMarkdownLinkPattern, " ").replace(urlPattern, " ");
 
       for (const match of lineWithoutUrls.matchAll(filePathCandidatePattern)) {
@@ -217,7 +311,7 @@ export async function detectBrokenFileReferences(params: {
           severity: "medium",
           filePath: instructionFile.relativePath,
           message: `Instruction file references missing file "${repoRelativeReferencePath}".`,
-          evidence: `Line ${lineIndex + 1}: ${line.trim()}`,
+          evidence: `Line ${lineNumber}: ${line.trim()}`,
           suggestion: "Create the referenced file or update the instruction to point at an existing path."
         });
       }
@@ -315,9 +409,7 @@ export async function detectPackageManagerConflicts(params: {
   const seenIssueKeys = new Set<string>();
 
   for (const instructionFile of params.instructionFiles) {
-    const lines = instructionFile.content.split(/\r?\n/);
-
-    for (const [lineIndex, line] of lines.entries()) {
+    for (const { line, lineNumber } of getInstructionContentLines(instructionFile)) {
       for (const commandPattern of packageManagerCommandPatterns) {
         if (commandPattern.packageManager === repositoryPackageManager.name) {
           continue;
@@ -330,7 +422,7 @@ export async function detectPackageManagerConflicts(params: {
             continue;
           }
 
-          const issueKey = `${instructionFile.relativePath}\0${lineIndex}\0${command.toLowerCase()}`;
+          const issueKey = `${instructionFile.relativePath}\0${lineNumber}\0${command.toLowerCase()}`;
 
           if (seenIssueKeys.has(issueKey)) {
             continue;
@@ -338,12 +430,12 @@ export async function detectPackageManagerConflicts(params: {
 
           seenIssueKeys.add(issueKey);
           issues.push({
-            id: `package_manager_conflict:${instructionFile.relativePath}:${lineIndex + 1}:${command.toLowerCase().replace(/\s+/g, "_")}`,
+            id: `package_manager_conflict:${instructionFile.relativePath}:${lineNumber}:${command.toLowerCase().replace(/\s+/g, "_")}`,
             type: "package_manager_conflict",
             severity: "medium",
             filePath: instructionFile.relativePath,
             message: `Instruction file uses ${commandPattern.packageManager} command "${command}" but this repository uses ${repositoryPackageManager.name}.`,
-            evidence: `Line ${lineIndex + 1}: ${line.trim()}`,
+            evidence: `Line ${lineNumber}: ${line.trim()}`,
             suggestion: `Replace ${commandPattern.packageManager} commands with ${repositoryPackageManager.name} equivalents, or update the repository package manager metadata if ${commandPattern.packageManager} is intended.`
           });
         }
@@ -358,12 +450,23 @@ export async function scanRepository(options: ScanOptions = {}): Promise<ScanRes
   const parsedOptions = scanOptionsSchema.parse(options);
   const cwd = path.resolve(parsedOptions.cwd);
   const instructionFiles = await discoverInstructionFiles(cwd);
-  const [brokenFileReferenceIssues, duplicateInstructionIssues, packageManagerConflictIssues] = await Promise.all([
+  const [
+    instructionMetadataIssues,
+    brokenFileReferenceIssues,
+    duplicateInstructionIssues,
+    packageManagerConflictIssues
+  ] = await Promise.all([
+    detectInstructionMetadataIssues({ instructionFiles }),
     detectBrokenFileReferences({ rootDir: cwd, instructionFiles }),
     detectDuplicateInstructions({ instructionFiles }),
     detectPackageManagerConflicts({ rootDir: cwd, instructionFiles })
   ]);
-  const issues = [...brokenFileReferenceIssues, ...duplicateInstructionIssues, ...packageManagerConflictIssues];
+  const issues = [
+    ...instructionMetadataIssues,
+    ...brokenFileReferenceIssues,
+    ...duplicateInstructionIssues,
+    ...packageManagerConflictIssues
+  ];
   const instructionFileLabel = instructionFiles.length === 1 ? "instruction file" : "instruction files";
 
   return {
@@ -378,10 +481,9 @@ function extractNormalizedInstructionOccurrences(
   instructionFile: InstructionFile
 ): NormalizedInstructionOccurrence[] {
   const occurrences: NormalizedInstructionOccurrence[] = [];
-  const lines = instructionFile.content.split(/\r?\n/);
   let isInsideCodeFence = false;
 
-  for (const [lineIndex, line] of lines.entries()) {
+  for (const { line, lineNumber } of getInstructionContentLines(instructionFile)) {
     const trimmedLine = line.trim();
 
     if (trimmedLine.length === 0) {
@@ -406,7 +508,7 @@ function extractNormalizedInstructionOccurrences(
     occurrences.push({
       normalizedInstruction,
       filePath: instructionFile.relativePath,
-      lineNumber: lineIndex + 1,
+      lineNumber,
       originalLine: line
     });
   }
@@ -427,6 +529,160 @@ function normalizeInstructionLine(line: string): string | undefined {
   }
 
   return normalizedInstruction;
+}
+
+function parseInstructionFileContent(content: string): {
+  contentWithoutFrontmatter: string;
+  contentStartLine: number;
+  hasFrontmatter: boolean;
+  metadata: InstructionMetadata;
+} {
+  const hasFrontmatter = matter.test(content);
+  const parsedContent = matter(content);
+
+  return {
+    contentWithoutFrontmatter: parsedContent.content,
+    contentStartLine: getContentStartLine(content, hasFrontmatter),
+    hasFrontmatter,
+    metadata: normalizeInstructionMetadata(parsedContent.data)
+  };
+}
+
+function normalizeInstructionMetadata(data: Record<string, unknown>): InstructionMetadata {
+  const metadata: InstructionMetadata = {};
+  const owner = normalizeStringMetadataValue(data.owner);
+  const lastReviewed = normalizeLastReviewedMetadataValue(data.last_reviewed);
+  const tags = normalizeTagsMetadataValue(data.tags);
+  const status = normalizeStringMetadataValue(data.status);
+
+  if (owner) {
+    metadata.owner = owner;
+  }
+
+  if (lastReviewed !== undefined) {
+    metadata.last_reviewed = lastReviewed;
+  }
+
+  if (tags) {
+    metadata.tags = tags;
+  }
+
+  if (status) {
+    metadata.status = status;
+  }
+
+  return metadata;
+}
+
+function normalizeStringMetadataValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : undefined;
+}
+
+function normalizeLastReviewedMetadataValue(value: unknown): string | Date | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmedValue = value.trim();
+    return trimmedValue.length > 0 ? trimmedValue : undefined;
+  }
+
+  return String(value);
+}
+
+function normalizeTagsMetadataValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const tags = value.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    .map((tag) => tag.trim());
+
+  return tags.length > 0 ? tags : undefined;
+}
+
+function getContentStartLine(content: string, hasFrontmatter: boolean): number {
+  if (!hasFrontmatter) {
+    return 1;
+  }
+
+  const lines = content.split(/\r?\n/);
+
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
+    if (lines[lineIndex]?.trim() === "---") {
+      return lineIndex + 2;
+    }
+  }
+
+  return 1;
+}
+
+function getInstructionContentLines(instructionFile: InstructionFile): Array<{ line: string; lineNumber: number }> {
+  return instructionFile.contentWithoutFrontmatter.split(/\r?\n/).map((line, lineIndex) => ({
+    line,
+    lineNumber: instructionFile.contentStartLine + lineIndex
+  }));
+}
+
+function parseLastReviewedDate(value: string | Date): Date | undefined {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return undefined;
+    }
+
+    return toUtcDateOnly(value);
+  }
+
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!dateMatch) {
+    return undefined;
+  }
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const parsedDate = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return parsedDate;
+}
+
+function toUtcDateOnly(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function formatDateOnly(date: Date): string {
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatMetadataValue(value: string | Date): string {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "Invalid Date" : formatDateOnly(value);
+  }
+
+  return value;
 }
 
 function formatFileList(filePaths: string[]): string {
